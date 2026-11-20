@@ -2,6 +2,8 @@
 "use client";
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export default function Home() {
   const [code, setCode] = useState("");
@@ -226,10 +228,94 @@ export default function Home() {
             </div>
           </div>
 
-          {/* AI Review Output */}
+          {/* Formatted AI Review Output */}
           {review ? (
-            <div className="min-h-[340px] max-h-[600px] overflow-y-auto whitespace-pre-wrap rounded-xl border border-purple-200 bg-[#faf9ff] p-5 text-sm leading-7 text-gray-700">
-              {review}
+            <div className="min-h-[340px] max-h-[600px] overflow-y-auto rounded-xl border border-purple-200 bg-[#faf9ff] p-5 text-sm leading-7 text-gray-700">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({ children }) => (
+                    <h1 className="mb-4 mt-6 text-2xl font-bold text-purple-950">
+                      {children}
+                    </h1>
+                  ),
+                  h2: ({ children }) => (
+                    <h2 className="mb-3 mt-5 border-b border-purple-100 pb-2 text-xl font-bold text-purple-800">
+                      {children}
+                    </h2>
+                  ),
+                  h3: ({ children }) => (
+                    <h3 className="mb-2 mt-4 text-lg font-semibold text-purple-800">
+                      {children}
+                    </h3>
+                  ),
+                  p: ({ children }) => (
+                    <p className="mb-3">{children}</p>
+                  ),
+                  ul: ({ children }) => (
+                    <ul className="mb-4 list-disc space-y-2 pl-6">
+                      {children}
+                    </ul>
+                  ),
+                  ol: ({ children }) => (
+                    <ol className="mb-4 list-decimal space-y-2 pl-6">
+                      {children}
+                    </ol>
+                  ),
+                  li: ({ children }) => (
+                    <li className="pl-1">{children}</li>
+                  ),
+                  strong: ({ children }) => (
+                    <strong className="font-bold text-purple-950">
+                      {children}
+                    </strong>
+                  ),
+                  em: ({ children }) => (
+                    <em className="text-purple-800">{children}</em>
+                  ),
+                  pre: ({ children }) => (
+                    <pre className="my-4 overflow-x-auto rounded-xl border border-purple-900 bg-[#211b32] p-4 text-sm leading-6 text-purple-100">
+                      {children}
+                    </pre>
+                  ),
+                  code: ({ children, className }) => (
+                    <code
+                      className={
+                        className
+                          ? `${className} font-mono text-purple-100`
+                          : "rounded bg-purple-100 px-1.5 py-0.5 font-mono text-purple-900"
+                      }
+                    >
+                      {children}
+                    </code>
+                  ),
+                  blockquote: ({ children }) => (
+                    <blockquote className="my-4 border-l-4 border-purple-400 pl-4 italic text-gray-600">
+                      {children}
+                    </blockquote>
+                  ),
+                  hr: () => <hr className="my-5 border-purple-200" />,
+                  table: ({ children }) => (
+                    <div className="my-4 overflow-x-auto">
+                      <table className="w-full border-collapse text-left text-sm">
+                        {children}
+                      </table>
+                    </div>
+                  ),
+                  th: ({ children }) => (
+                    <th className="border border-purple-200 bg-purple-100 px-3 py-2 font-semibold text-purple-950">
+                      {children}
+                    </th>
+                  ),
+                  td: ({ children }) => (
+                    <td className="border border-purple-200 px-3 py-2">
+                      {children}
+                    </td>
+                  ),
+                }}
+              >
+                {review}
+              </ReactMarkdown>
             </div>
           ) : (
             <div className="flex min-h-[340px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-purple-200 bg-[#faf9ff] px-5 text-center">
