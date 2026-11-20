@@ -1,4 +1,5 @@
-﻿import { GoogleGenAI } from "@google/genai";
+﻿
+import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
@@ -35,9 +36,10 @@ export async function POST(request: Request) {
 
     const ai = new GoogleGenAI({ apiKey });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash-lite",
-      contents: `
+    const responseStream =
+      await ai.models.generateContentStream({
+        model: "gemini-3.5-flash-lite",
+        contents: `
 You are CodeSentry AI, an experienced code reviewer.
 
 Review the following ${language} code.
@@ -59,20 +61,44 @@ Code to review:
 \`\`\`${language}
 ${code}
 \`\`\`
-      `,
+        `,
+      });
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+
+        try {
+          for await (const chunk of responseStream) {
+            if (chunk.text) {
+              controller.enqueue(
+                encoder.encode(chunk.text)
+              );
+            }
+          }
+
+          controller.close();
+        } catch (error) {
+          console.error("Streaming error:", error);
+          controller.error(error);
+        }
+      },
     });
 
-    return NextResponse.json({
-      review: response.text || "No review was generated.",
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+      },
     });
   } catch (error) {
     console.error("Code review error:", error);
 
     return NextResponse.json(
-      { error: "Unable to review your code right now. Please try again." },
+      {
+        error: "Unable to review your code right now. Please try again.",
+      },
       { status: 500 }
     );
   }
 }
-
-

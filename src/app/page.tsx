@@ -39,13 +39,38 @@ export default function Home() {
         body: JSON.stringify({ code, language }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         throw new Error(data.error || "The code review failed.");
       }
 
-      setReview(data.review || "No review was returned.");
+      if (!response.body) {
+        throw new Error("Streaming is not supported by this response.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        const chunk = decoder.decode(value, { stream: true });
+
+        if (chunk) {
+          setReview((previousReview) => previousReview + chunk);
+        }
+      }
+
+      const remainingText = decoder.decode();
+
+      if (remainingText) {
+        setReview((previousReview) => previousReview + remainingText);
+      }
+
       setMessage("Code review completed successfully.");
     } catch (err) {
       setError(
@@ -316,6 +341,12 @@ export default function Home() {
               >
                 {review}
               </ReactMarkdown>
+
+              {isLoading && (
+                <p className="mt-4 animate-pulse text-xs font-medium text-purple-600">
+                  ✦ CodeSentry AI is writing your review...
+                </p>
+              )}
             </div>
           ) : (
             <div className="flex min-h-[340px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-purple-200 bg-[#faf9ff] px-5 text-center">
