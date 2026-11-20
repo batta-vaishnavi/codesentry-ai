@@ -62,6 +62,9 @@ Code to review:
 ${code}
 \`\`\`
         `,
+        config: {
+          abortSignal: request.signal,
+        },
       });
 
     const stream = new ReadableStream({
@@ -70,6 +73,10 @@ ${code}
 
         try {
           for await (const chunk of responseStream) {
+            if (request.signal.aborted) {
+              break;
+            }
+
             if (chunk.text) {
               controller.enqueue(
                 encoder.encode(chunk.text)
@@ -79,6 +86,11 @@ ${code}
 
           controller.close();
         } catch (error) {
+          if (request.signal.aborted) {
+            controller.close();
+            return;
+          }
+
           console.error("Streaming error:", error);
           controller.error(error);
         }

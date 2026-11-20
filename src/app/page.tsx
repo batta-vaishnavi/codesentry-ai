@@ -1,7 +1,7 @@
 ﻿
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -12,6 +12,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [review, setReview] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleReview = async () => {
     setError("");
@@ -28,6 +30,9 @@ export default function Home() {
       return;
     }
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsLoading(true);
 
     try {
@@ -37,6 +42,7 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ code, language }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -71,16 +77,36 @@ export default function Home() {
         setReview((previousReview) => previousReview + remainingText);
       }
 
+      if (controller.signal.aborted) {
+        return;
+      }
+
       setMessage("Code review completed successfully.");
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Something went wrong. Please try again."
-      );
+      if (
+        err instanceof Error &&
+        err.name === "AbortError"
+      ) {
+        setMessage(
+          "Review cancelled. The displayed results may be incomplete."
+        );
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Something went wrong. Please try again."
+        );
+      }
     } finally {
-      setIsLoading(false);
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+        setIsLoading(false);
+      }
     }
+  };
+
+  const handleCancel = () => {
+    abortControllerRef.current?.abort();
   };
 
   return (
@@ -228,7 +254,17 @@ export default function Home() {
             {isLoading ? "Reviewing your code..." : "✦ Review My Code"}
           </button>
 
-          {/* Success Message */}
+          {/* Cancel Review Button */}
+          {isLoading && (
+            <button
+              onClick={handleCancel}
+              className="mt-3 w-full rounded-xl border border-red-200 bg-red-50 px-5 py-3 font-semibold text-red-700 transition hover:bg-red-100 active:scale-[0.99]"
+            >
+              ✕ Cancel Review
+            </button>
+          )}
+
+          {/* Success or Cancellation Message */}
           {message && (
             <div className="mt-4 rounded-xl border border-purple-200 bg-purple-50 p-4 text-sm leading-6 text-purple-800">
               ✓ {message}
@@ -252,6 +288,26 @@ export default function Home() {
               ✦
             </div>
           </div>
+
+          {/* Live Progress Indicator */}
+          {isLoading && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="mb-4 flex items-center gap-3 rounded-xl border border-purple-200 bg-purple-50 p-4"
+            >
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-purple-200 border-t-purple-700"></div>
+
+              <div>
+                <p className="text-sm font-semibold text-purple-900">
+                  CodeSentry AI is working
+                </p>
+                <p className="text-xs text-purple-600">
+                  Analyzing your code and generating suggestions...
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Formatted AI Review Output */}
           {review ? (
@@ -344,7 +400,7 @@ export default function Home() {
 
               {isLoading && (
                 <p className="mt-4 animate-pulse text-xs font-medium text-purple-600">
-                  ✦ CodeSentry AI is writing your review...
+                  ✦ More review details are arriving...
                 </p>
               )}
             </div>
