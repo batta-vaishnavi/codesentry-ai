@@ -1,9 +1,20 @@
 ﻿
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+type ReviewHistoryItem = {
+  id: string;
+  code: string;
+  language: string;
+  review: string;
+  date: string;
+};
+
+const HISTORY_KEY = "codesentry-review-history";
+const MAX_HISTORY = 10;
 
 export default function Home() {
   const [code, setCode] = useState("");
@@ -12,28 +23,142 @@ export default function Home() {
   const [error, setError] = useState("");
   const [review, setReview] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [status, setStatus] = useState("Ready to review");
+  const [history, setHistory] = useState<ReviewHistoryItem[]>([]);
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Load saved history when the page opens
+  useEffect(() => {
+    try {
+      const savedHistory = localStorage.getItem(HISTORY_KEY);
+
+      if (savedHistory) {
+        const parsedHistory = JSON.parse(savedHistory);
+
+        if (Array.isArray(parsedHistory)) {
+          setHistory(parsedHistory);
+        }
+      }
+    } catch (err) {
+      console.error("Unable to load review history:", err);
+    }
+  }, []);
+
+  // Save a completed review
+  const saveReviewToHistory = (
+    completedReview: string,
+    submittedCode: string,
+    selectedLanguage: string
+  ) => {
+    const newEntry: ReviewHistoryItem = {
+      id: `${Date.now()}-${Math.random()}`,
+      code: submittedCode,
+      language: selectedLanguage,
+      review: completedReview,
+      date: new Date().toISOString(),
+    };
+
+    const updatedHistory = [newEntry, ...history].slice(
+      0,
+      MAX_HISTORY
+    );
+
+    try {
+      localStorage.setItem(
+        HISTORY_KEY,
+        JSON.stringify(updatedHistory)
+      );
+
+      setHistory(updatedHistory);
+    } catch (err) {
+      console.error("Unable to save review history:", err);
+      setMessage(
+        "Review completed, but browser storage could not save the history."
+      );
+    }
+  };
+
+  // Open a previous review
+  const openHistoryItem = (item: ReviewHistoryItem) => {
+    setCode(item.code);
+    setLanguage(item.language);
+    setReview(item.review);
+    setError("");
+    setMessage("Previous review loaded successfully.");
+    setStatus("Viewing saved review");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  };
+
+  // Delete one history item
+  const deleteHistoryItem = (id: string) => {
+    const updatedHistory = history.filter(
+      (item) => item.id !== id
+    );
+
+    try {
+      localStorage.setItem(
+        HISTORY_KEY,
+        JSON.stringify(updatedHistory)
+      );
+
+      setHistory(updatedHistory);
+    } catch (err) {
+      console.error("Unable to delete review:", err);
+      setError("Unable to delete this review.");
+    }
+  };
+
+  // Clear all history
+  const clearHistory = () => {
+    if (!window.confirm("Are you sure you want to delete all review history?")) {
+      return;
+    }
+
+    try {
+      localStorage.removeItem(HISTORY_KEY);
+      setHistory([]);
+      setMessage("All review history has been cleared.");
+    } catch (err) {
+      console.error("Unable to clear history:", err);
+      setError("Unable to clear review history.");
+    }
+  };
+
   const handleReview = async () => {
+    if (isLoading) return;
+
     setError("");
     setMessage("");
     setReview("");
+    setStatus("Validating your code...");
 
     if (!code.trim()) {
       setError("Please enter some code before starting the review.");
+      setStatus("Ready to review");
       return;
     }
 
     if (code.length > 12000) {
-      setError("Code is too long. Maximum allowed length is 12,000 characters.");
+      setError(
+        "Code is too long. Maximum allowed length is 12,000 characters."
+      );
+      setStatus("Ready to review");
       return;
     }
+
+    const submittedCode = code;
+    const selectedLanguage = language;
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     setIsLoading(true);
+    setStatus("Connecting to AI...");
 
     try {
       const response = await fetch("/api/review", {
@@ -41,7 +166,10 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ code, language }),
+        body: JSON.stringify({
+          code: submittedCode,
+          language: selectedLanguage,
+        }),
         signal: controller.signal,
       });
 
@@ -54,43 +182,55 @@ export default function Home() {
         throw new Error("Streaming is not supported by this response.");
       }
 
+      setStatus("AI is analyzing your code...");
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+
+      let fullReview = "";
 
       while (true) {
         const { done, value } = await reader.read();
 
-        if (done) {
-          break;
-        }
+        if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
 
         if (chunk) {
-          setReview((previousReview) => previousReview + chunk);
+          fullReview += chunk;
+          setReview(fullReview);
+          setStatus("Generating your code review...");
         }
       }
 
       const remainingText = decoder.decode();
 
       if (remainingText) {
-        setReview((previousReview) => previousReview + remainingText);
+        fullReview += remainingText;
+        setReview(fullReview);
       }
 
-      if (controller.signal.aborted) {
-        return;
-      }
-
+      setStatus("Review complete");
       setMessage("Code review completed successfully.");
+
+      if (fullReview.trim()) {
+        saveReviewToHistory(
+          fullReview,
+          submittedCode,
+          selectedLanguage
+        );
+      }
     } catch (err) {
       if (
         err instanceof Error &&
-        err.name === "AbortError"
+        (err.name === "AbortError" || controller.signal.aborted)
       ) {
+        setStatus("Review cancelled");
         setMessage(
           "Review cancelled. The displayed results may be incomplete."
         );
       } else {
+        setStatus("Review failed");
         setError(
           err instanceof Error
             ? err.message
@@ -100,8 +240,9 @@ export default function Home() {
     } finally {
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
-        setIsLoading(false);
       }
+
+      setIsLoading(false);
     }
   };
 
@@ -111,6 +252,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#f8f6ff] text-[#28213c]">
+
       {/* Navigation */}
       <header className="border-b border-purple-100 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
@@ -133,6 +275,9 @@ export default function Home() {
             <a href="#review" className="transition hover:text-purple-700">
               Code Review
             </a>
+            <a href="#history" className="transition hover:text-purple-700">
+              History
+            </a>
             <a href="#features" className="transition hover:text-purple-700">
               Features
             </a>
@@ -153,7 +298,9 @@ export default function Home() {
         <h2 className="text-4xl font-extrabold tracking-tight text-purple-950 sm:text-5xl">
           Write Better Code.
           <br />
-          <span className="text-purple-600">Build With Confidence.</span>
+          <span className="text-purple-600">
+            Build With Confidence.
+          </span>
         </h2>
 
         <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-gray-600">
@@ -167,6 +314,7 @@ export default function Home() {
         id="review"
         className="mx-auto grid max-w-7xl gap-6 px-6 pb-16 lg:grid-cols-5"
       >
+
         {/* Code Input */}
         <div className="rounded-2xl border border-purple-100 bg-white p-6 shadow-sm lg:col-span-3">
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -195,7 +343,8 @@ export default function Home() {
             id="language"
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
-            className="mb-5 w-full rounded-xl border border-purple-200 bg-purple-50 px-4 py-3 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+            disabled={isLoading}
+            className="mb-5 w-full rounded-xl border border-purple-200 bg-purple-50 px-4 py-3 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-100 disabled:opacity-60"
           >
             <option>Python</option>
             <option>JavaScript</option>
@@ -227,9 +376,10 @@ export default function Home() {
                 setMessage("");
               }}
               maxLength={12000}
+              disabled={isLoading}
               placeholder={`# Paste your ${language} code here...\n\n# Example:\ndef greet(name):\n    print("Hello", name)\n\ngreet("Developer")`}
               spellCheck={false}
-              className="min-h-[300px] w-full resize-y bg-transparent p-5 font-mono text-sm leading-7 text-purple-100 outline-none placeholder:text-purple-300/50"
+              className="min-h-[300px] w-full resize-y bg-transparent p-5 font-mono text-sm leading-7 text-purple-100 outline-none placeholder:text-purple-300/50 disabled:opacity-60"
             />
           </div>
 
@@ -245,26 +395,48 @@ export default function Home() {
             </p>
           )}
 
+          {/* Live Progress */}
+          {isLoading && (
+            <div className="mt-5 rounded-xl border border-purple-200 bg-purple-50 p-4">
+              <div className="flex items-center gap-3">
+                <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-purple-200 border-t-purple-700"></span>
+
+                <div>
+                  <p className="text-sm font-semibold text-purple-900">
+                    {status}
+                  </p>
+                  <p className="mt-1 text-xs text-purple-600">
+                    Please wait while CodeSentry AI processes your code.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-purple-200">
+                <div className="h-full w-1/2 animate-pulse rounded-full bg-purple-700"></div>
+              </div>
+            </div>
+          )}
+
           {/* Review Button */}
           <button
             onClick={handleReview}
             disabled={isLoading}
             className="mt-6 w-full rounded-xl bg-purple-700 px-5 py-4 font-semibold text-white shadow-lg shadow-purple-200 transition hover:bg-purple-800 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isLoading ? "Reviewing your code..." : "✦ Review My Code"}
+            {isLoading ? "Review in progress..." : "✦ Review My Code"}
           </button>
 
-          {/* Cancel Review Button */}
+          {/* Cancel Button */}
           {isLoading && (
             <button
               onClick={handleCancel}
-              className="mt-3 w-full rounded-xl border border-red-200 bg-red-50 px-5 py-3 font-semibold text-red-700 transition hover:bg-red-100 active:scale-[0.99]"
+              className="mt-3 w-full rounded-xl border border-red-200 bg-red-50 px-5 py-3 font-semibold text-red-700 transition hover:bg-red-100"
             >
               ✕ Cancel Review
             </button>
           )}
 
-          {/* Success or Cancellation Message */}
+          {/* Success Message */}
           {message && (
             <div className="mt-4 rounded-xl border border-purple-200 bg-purple-50 p-4 text-sm leading-6 text-purple-800">
               ✓ {message}
@@ -289,27 +461,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Live Progress Indicator */}
-          {isLoading && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="mb-4 flex items-center gap-3 rounded-xl border border-purple-200 bg-purple-50 p-4"
-            >
-              <div className="h-5 w-5 animate-spin rounded-full border-2 border-purple-200 border-t-purple-700"></div>
-
-              <div>
-                <p className="text-sm font-semibold text-purple-900">
-                  CodeSentry AI is working
-                </p>
-                <p className="text-xs text-purple-600">
-                  Analyzing your code and generating suggestions...
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Formatted AI Review Output */}
+          {/* Formatted AI Review */}
           {review ? (
             <div className="min-h-[340px] max-h-[600px] overflow-y-auto rounded-xl border border-purple-200 bg-[#faf9ff] p-5 text-sm leading-7 text-gray-700">
               <ReactMarkdown
@@ -400,7 +552,7 @@ export default function Home() {
 
               {isLoading && (
                 <p className="mt-4 animate-pulse text-xs font-medium text-purple-600">
-                  ✦ More review details are arriving...
+                  ✦ CodeSentry AI is writing your review...
                 </p>
               )}
             </div>
@@ -434,6 +586,104 @@ export default function Home() {
 
           <p className="mt-5 text-center text-xs text-gray-400">
             Powered by CodeSentry AI
+          </p>
+        </div>
+      </section>
+
+      {/* Review History */}
+      <section
+        id="history"
+        className="border-t border-purple-100 bg-white"
+      >
+        <div className="mx-auto max-w-7xl px-6 py-14">
+          <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 className="text-2xl font-bold text-purple-950">
+                <span className="mr-2">◷</span>
+                Review History
+              </h3>
+
+              <p className="mt-2 text-sm text-gray-500">
+                Access your previously completed code reviews.
+              </p>
+            </div>
+
+            {history.length > 0 && (
+              <button
+                onClick={clearHistory}
+                disabled={isLoading}
+                className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+              >
+                Clear All History
+              </button>
+            )}
+          </div>
+
+          {history.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-purple-200 bg-[#faf9ff] px-6 py-12 text-center">
+              <div className="mb-4 text-4xl text-purple-400">
+                ◷
+              </div>
+
+              <h4 className="text-lg font-bold text-purple-950">
+                No Review History Yet
+              </h4>
+
+              <p className="mt-2 text-sm text-gray-500">
+                Your completed code reviews will automatically appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+              {history.map((item) => (
+                <div
+                  key={item.id}
+                  className="rounded-2xl border border-purple-100 bg-[#faf9ff] p-5 transition hover:-translate-y-1 hover:shadow-md"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-700">
+                      {item.language}
+                    </span>
+
+                    <span className="text-xs text-gray-400">
+                      {new Date(item.date).toLocaleDateString()}
+                    </span>
+                  </div>
+
+                  <h4 className="mt-4 font-bold text-purple-950">
+                    Code Review
+                  </h4>
+
+                  <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm text-gray-500">
+                    {item.code}
+                  </p>
+
+                  <div className="mt-5 flex gap-2">
+                    <button
+                      onClick={() => openHistoryItem(item)}
+                      disabled={isLoading}
+                      className="flex-1 rounded-lg bg-purple-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-purple-800 disabled:opacity-50"
+                    >
+                      View Review
+                    </button>
+
+                    <button
+                      onClick={() => deleteHistoryItem(item.id)}
+                      disabled={isLoading}
+                      title="Delete this review"
+                      aria-label="Delete this review"
+                      className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                    >
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="mt-6 text-center text-xs text-gray-400">
+            Your latest 10 completed reviews are saved in this browser.
           </p>
         </div>
       </section>
